@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ConsultBae Audio Submission</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; }
+    input, button { padding: 10px; margin: 6px 0; }
+    input[type="text"], input[type="tel"], input[type="file"] { width: 100%; box-sizing: border-box; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .error { color: #b00020; }
+    audio { width: 100%; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Audio Submission</h1>
+  <p>Enter your details, then record audio in the browser or upload a 16-bit PCM WAV file.</p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form id="audioForm" method="post" enctype="multipart/form-data">
+    <label>Name</label>
+    <input type="text" name="name" required>
+
+    <label>Phone</label>
+    <input type="tel" name="phone" required>
+
+    <h3>Record audio</h3>
+    <div class="row">
+      <button type="button" id="startBtn">Start recording</button>
+      <button type="button" id="stopBtn" disabled>Stop recording</button>
+    </div>
+    <p id="status">Not recording</p>
+    <audio id="preview" controls hidden></audio>
+
+    <h3>Or upload WAV</h3>
+    <input id="audioInput" type="file" name="audio" accept="audio/wav,.wav">
+
+    <br>
+    <button type="submit">Submit</button>
+  </form>
+
+  <p><a href="{{ url_for('audio.audio_submissions') }}">View submissions</a></p>
+
+<script>
+let audioContext;
+let source;
+let processor;
+let stream;
+let chunks = [];
+let sampleRate = 44100;
+
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const statusText = document.getElementById('status');
+const preview = document.getElementById('preview');
+const audioInput = document.getElementById('audioInput');
+
+startBtn.onclick = async () => {
+  chunks = [];
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  sampleRate = audioContext.sampleRate;
+  source = audioContext.createMediaStreamSource(stream);
+  processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+  processor.onaudioprocess = event => {
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  };
+
+  source.connect(processor);
+  processor.connect(audioContext.destination);
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  statusText.textContent = 'Recording...';
+};
+
+stopBtn.onclick = () => {
+  processor.disconnect();
+  source.disconnect();
+  stream.getTracks().forEach(track => track.stop());
+  audioContext.close();
+
+  const wavBlob = encodeWav(chunks, sampleRate);
+  const wavFile = new File([wavBlob], 'recording.wav', { type: 'audio/wav' });
+  const transfer = new DataTransfer();
+  transfer.items.add(wavFile);
+  audioInput.files = transfer.files;
+
+  preview.src = URL.createObjectURL(wavBlob);
+  preview.hidden = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  statusText.textContent = 'Recording ready';
+};
+
+function encodeWav(buffers, rate) {
+  const totalLength = buffers.reduce((sum, chunk) => sum + chunk.length, 0);
+  const samples = new Float32Array(totalLength);
+  let offset = 0;
+  buffers.forEach(chunk => {
+    samples.set(chunk, offset);
+    offset += chunk.length;
+  });
+
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeText(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeText(view, 8, 'WAVE');
+  writeText(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  let index = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(index, sample < 0 ? sample * 32768 : sample * 32767, true);
+    index += 2;
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeText(view, offset, text) {
+  for (let i = 0; i < text.length; i++) {
+    view.setUint8(offset + i, text.charCodeAt(i));
+  }
+}
+</script>
+</body>
+</html>
