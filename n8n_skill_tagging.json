@@ -1,0 +1,190 @@
+{
+  "name": "ConsultBae Skill Tagging",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        -96
+      ],
+      "id": "05465a9c-45ce-47b9-9507-c1c2ce7549b0",
+      "name": "When clicking ‘Execute workflow’",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://skkr.pythonanywhere.com/candidates",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        96,
+        -96
+      ],
+      "id": "27c31dd8-19c9-41d0-82a0-21a0278b18bb",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "candidates",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        240,
+        -96
+      ],
+      "id": "07d6a2bc-4148-4aad-af34-6d4e4154bf44",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "maxItems": 55
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -96
+      ],
+      "id": "03c00bf3-a604-4147-b8f8-2906b403b251",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://skkr.pythonanywhere.com/category",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "candidate_id",
+              "value": "={{ $('Limit').item.json.candidate_id }}"
+            },
+            {
+              "name": "skill_category",
+              "value": "={{ $json.content.parts[0].text.replace(/\"/g, '') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        512,
+        96
+      ],
+      "id": "663d8f74-12e9-4ced-bb44-06f8a4efa52e",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Classify this candidate into exactly one category:\n\nautomation-heavy\nweb dev\ndata\nother\n\nSkills: {{ $json.skills }}\n\nReturn only the category name."
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        112
+      ],
+      "id": "b4179a7f-5ae8-4999-bce9-c0236673dd49",
+      "name": "Message a model",
+      "retryOnFail": true,
+      "alwaysOutputData": true,
+      "maxTries": 2,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "rxqThoIZ2TgphxQb",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "77b6e7a4-7b38-48e1-a6a2-821eb2b6d09e",
+  "nodeGroups": [],
+  "id": "Mq595kn1QvX0QKc1",
+  "tags": []
+}
