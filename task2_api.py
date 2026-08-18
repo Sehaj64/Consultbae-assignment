@@ -1,10 +1,13 @@
-"""Task 2 bridge: let n8n read/write the same SQLite database from Task 1."""
+"""Task 2 bridge plus Task 3 audio routes."""
 
 from flask import Flask, jsonify, request
 import sqlite3
 from pathlib import Path
 
+from task3_audio import audio_bp
+
 app = Flask(__name__)
+app.register_blueprint(audio_bp)
 DB_FILE = Path(__file__).resolve().parent / "consultbae.db"
 
 
@@ -14,7 +17,7 @@ def connect():
 
 @app.get("/")
 def home():
-    return jsonify({"status": "ok", "message": "ConsultBae Task 2 API"})
+    return jsonify({"status": "ok", "message": "ConsultBae API"})
 
 
 @app.get("/candidates")
