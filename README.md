@@ -8,6 +8,15 @@ I built this as one small system rather than three disconnected tasks:
 
 The main goal was to keep the data flow simple enough that I can explain how each part works.
 
+## Live demo links
+
+- Candidate skill results: https://skkr.pythonanywhere.com/results
+- Pending candidates API used by n8n: https://skkr.pythonanywhere.com/candidates
+- Audio submission form: https://skkr.pythonanywhere.com/audio
+- Audio submissions + playback: https://skkr.pythonanywhere.com/audio/submissions
+
+The `/results` page shows all merged candidates and their `skill_category`, which makes it easy to see the labels before and after the n8n workflow runs.
+
 ## Architecture
 
 ```text
