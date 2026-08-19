@@ -6,7 +6,7 @@ I built this as one small system rather than three disconnected tasks:
 - use n8n + Gemini to classify candidate skills and write the result back to that same database;
 - collect audio submissions, calculate the required audio properties, and store the metadata in the same database.
 
-The main goal I kept throughout the assignment was: **keep the data flow simple enough that I can explain and extend it later.**
+The main goal was to keep the data flow simple enough that I can explain how each part works.
 
 ## Architecture
 
@@ -35,10 +35,10 @@ Current result: **103 valid source rows → 56 unique candidates**.
 
 ### Matching logic
 
-I intentionally kept the matching conservative:
+I kept the matching careful:
 
 1. normalized email or phone first;
-2. exact name + city only as a guarded fallback;
+2. exact name + city only when there was no conflicting identifier;
 3. never merge only because the names look the same.
 
 This matters because there are ambiguous records such as multiple `Arjun Mehta` entries. If the identifiers conflict, I keep them separate instead of forcing a merge.
@@ -57,7 +57,7 @@ Manual Trigger
 → SQLite
 ```
 
-I kept SQLite as the source of truth. Since n8n Cloud cannot directly open the SQLite file on my machine/server, I added a very small Flask API in `task2_api.py`:
+I kept SQLite as the main database. Since n8n Cloud cannot directly open the SQLite file on my machine/server, I added a small Flask API in `task2_api.py`:
 
 - `GET /candidates` returns candidates whose `skill_category` is empty;
 - `POST /category` accepts `candidate_id` + the Gemini category and updates that row in SQLite.
@@ -93,7 +93,7 @@ For each 16-bit PCM WAV submission I store:
 - bitrate (kbps)
 - RMS loudness (dBFS)
 
-I used RMS dBFS as a simple loudness estimate; it is not meant to be a full LUFS implementation.
+I used RMS dBFS as a simple loudness estimate; it is not a full LUFS measurement.
 
 Routes:
 
@@ -117,7 +117,7 @@ This creates `consultbae.db`, writes `merged_candidates.csv`, and starts the Fla
 
 For Task 2, import `n8n_skill_tagging.json` into n8n and configure your own Gemini credential. No Gemini API key is stored in the repository.
 
-> Rerunning `pipeline.py` rebuilds the `candidates` table, so the derived `skill_category` values are reset. After rebuilding Task 1, rerun the n8n workflow to populate them again.
+> Rerunning `pipeline.py` rebuilds the `candidates` table, so the `skill_category` values are reset. After rebuilding Task 1, rerun the n8n workflow to populate them again.
 
 ## Task 4 — Data issues found and what I did
 
@@ -144,23 +144,23 @@ These are the issues I found while working through the three source files:
 
 I was not blocked for hours on every task, but there were a few places where I had to stop, rethink the approach, and simplify it before moving on.
 
-### 1. The first merge solution became harder to defend than it needed to be
+### 1. The first merge solution became harder to explain than it needed to be
 
 My first concern with Task 1 was not only "does it run?" but "can I explain why every merge happened?" The earlier approach was becoming more complicated than I wanted for this dataset.
 
 I asked AI to help me simplify the pipeline without changing the core result. I considered more aggressive fuzzy/name-based matching, but rejected it because a false merge is worse than leaving an uncertain person separate.
 
-I ended up with a much simpler rule that I can explain: **email/phone first, then a guarded exact name + city fallback**. The ambiguous `Arjun Mehta` rows were a useful test of this rule because I deliberately did not force them into one person.
+I ended up with a simpler rule that I can explain: **email/phone first, then exact name + city only when identifiers do not conflict**. The ambiguous `Arjun Mehta` rows were a useful test of this rule because I deliberately did not force them into one person.
 
 ### 2. I first thought a simple processed output into n8n would be enough
 
-This was the main architecture decision in Task 2.
+This was the main decision in Task 2.
 
 At first I thought I could just feed the processed data into n8n and run the Gemini step. Then I asked myself: **if the Task 1 data changes, how will this workflow use the updated data?** A copied/static dataset inside n8n would work for one demo, but it could become stale.
 
-I asked AI how n8n Cloud could read and write the SQLite database created by Task 1. I looked at using a separate n8n Data Table, but rejected that because it would give me a second copy of the data to keep in sync.
+I asked AI how n8n Cloud could read and write the SQLite database created by Task 1. I looked at using a separate n8n Data Table, but rejected that because it would give me another copy of the data to keep in sync.
 
-The solution was to keep SQLite as the source of truth and expose only two small API endpoints through Flask. n8n reads current candidates through `GET /candidates` and writes the Gemini result back through `POST /category`.
+The solution was to keep SQLite as the main database and expose only two small API endpoints through Flask. n8n reads current candidates through `GET /candidates` and writes the Gemini result back through `POST /category`.
 
 That is also why I hosted the Flask app on PythonAnywhere: n8n Cloud needed an internet-accessible endpoint instead of a local SQLite file.
 
@@ -170,9 +170,9 @@ Once the n8n flow was connected, I still had to get the Gemini node configured a
 
 I hit a **model-required** setup error first, and later a temporary **service unavailable / high demand** response from Gemini. I checked the Gemini node settings, selected the text/model configuration, enabled retry, and tested with one candidate before processing the rest.
 
-The next thing I had to understand was the response shape. Gemini did not return a flat value; the category was inside `content.parts[0].text`, and the returned text also had quote characters around it. I inspected the n8n output and mapped that exact field into the final HTTP request, stripping the extra quotes before writing it back.
+The next thing I had to understand was the response shape. Gemini did not return a flat value; the category was inside `content.parts[0].text`, and the returned text also had quote characters around it. I inspected the n8n output and mapped that field into the final HTTP request, removing the extra quotes before writing it back.
 
-I kept the candidate ID in the same item path so the category was written to the correct person. After the final run, `GET /candidates` returned:
+I kept the candidate ID with the same item so the category was written to the correct person. After the final run, `GET /candidates` returned:
 
 ```json
 {"candidates":[]}
@@ -187,12 +187,12 @@ For this assignment SQLite + server-side audio storage is enough, but I would no
 Before launch I would:
 
 - move audio files to object storage such as S3/R2;
-- use signed direct uploads so Flask does not proxy every large file;
-- move metadata to managed PostgreSQL for better concurrent writes;
-- put audio analysis behind a queue so uploads can return quickly and failed processing can retry;
-- add an idempotency/submission key to reduce duplicate submissions after retries;
-- add file-size/type/duration checks, rate limits, monitoring, and error states;
-- define an audio retention policy because storage would become the main ongoing cost.
+- let users upload directly to that storage instead of sending every large file through Flask;
+- move metadata to PostgreSQL for better handling of many simultaneous writes;
+- put audio analysis in a queue so uploads can finish quickly and failed processing can retry;
+- add a unique submission ID to reduce duplicate records after retries;
+- add file-size/type/duration checks, rate limits, monitoring, and clear error states;
+- define how long recordings should be kept because storage will grow quickly.
 
 ## Files
 
@@ -209,6 +209,4 @@ Before launch I would:
 
 ## AI use
 
-I used ChatGPT as a pair-programming/debugging tool during this assignment, especially for unfamiliar parts such as n8n, Flask-to-n8n integration, and browser audio handling.
-
-I also repeatedly asked for simpler versions and explanations instead of keeping code I could not defend. The final implementation is intentionally small: I can explain the matching rules, the two API endpoints, the n8n flow, the database writes, and the audio calculations. That was more important to me than adding extra features just for polish.
+When something was new or confusing, I used ChatGPT to understand it or fix an issue. I then checked the final flow myself so I knew what each part was doing.
