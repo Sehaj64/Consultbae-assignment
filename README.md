@@ -69,6 +69,8 @@ Gemini returns one of:
 - `data`
 - `other`
 
+One of the 56 merged candidates has no skills in the source data. The API skips records with no skills instead of asking the model to guess a skill category, so the workflow tagged the 55 candidates that had skill data.
+
 For the demo, the Flask app is hosted on PythonAnywhere.
 
 > This is not an automatic file-change trigger. If the CSV files change, I rerun Task 1 first so SQLite contains the latest cleaned data, then run the n8n workflow against that latest database state.
@@ -142,13 +144,13 @@ These are the issues I found while working through the three source files:
 
 ## Stuck log — what actually happened
 
-I was not blocked for hours on every task, but there were a few places where I had to stop, rethink the approach, and simplify it before moving on.
+I was not blocked for hours on every task, but there were a few places where I had to stop, rethink the approach, and simplify it before moving on. Most of my debugging came from searching through the actual CSV/output rows, checking n8n node output and errors, and checking the PythonAnywhere setup rather than doing broad web searches.
 
 ### 1. The first merge solution became harder to explain than it needed to be
 
 My first concern with Task 1 was not only "does it run?" but "can I explain why every merge happened?" The earlier approach was becoming more complicated than I wanted for this dataset.
 
-I asked AI to help me simplify the pipeline without changing the core result. I considered more aggressive fuzzy/name-based matching, but rejected it because a false merge is worse than leaving an uncertain person separate.
+I searched the source and merged output for repeated emails, repeated phones, and same-name cases to see where a simple rule could fail. I asked AI to help me simplify the pipeline without changing the core result. I considered more aggressive fuzzy/name-based matching, but rejected it because a false merge is worse than leaving an uncertain person separate.
 
 I ended up with a simpler rule that I can explain: **email/phone first, then exact name + city only when identifiers do not conflict**. The ambiguous `Arjun Mehta` rows were a useful test of this rule because I deliberately did not force them into one person.
 
@@ -158,7 +160,7 @@ This was the main decision in Task 2.
 
 At first I thought I could just feed the processed data into n8n and run the Gemini step. Then I asked myself: **if the Task 1 data changes, how will this workflow use the updated data?** A copied/static dataset inside n8n would work for one demo, but it could become stale.
 
-I asked AI how n8n Cloud could read and write the SQLite database created by Task 1. I looked at using a separate n8n Data Table, but rejected that because it would give me another copy of the data to keep in sync.
+I checked the n8n options for how the cloud workflow could reach my data and asked AI how n8n Cloud could read and write the SQLite database created by Task 1. I looked at using a separate n8n Data Table, but rejected that because it would give me another copy of the data to keep in sync.
 
 The solution was to keep SQLite as the main database and expose only two small API endpoints through Flask. n8n reads current candidates through `GET /candidates` and writes the Gemini result back through `POST /category`.
 
@@ -168,7 +170,7 @@ That is also why I hosted the Flask app on PythonAnywhere: n8n Cloud needed an i
 
 Once the n8n flow was connected, I still had to get the Gemini node configured and map its response correctly into the final POST request.
 
-I hit a **model-required** setup error first, and later a temporary **service unavailable / high demand** response from Gemini. I checked the Gemini node settings, selected the text/model configuration, enabled retry, and tested with one candidate before processing the rest.
+I hit a **model-required** setup error first, and later a temporary **service unavailable / high demand** response from Gemini. I used the n8n error/output panel to see what was failing, checked the Gemini node settings, selected the text/model configuration, enabled retry, and tested with one candidate before processing the rest.
 
 The next thing I had to understand was the response shape. Gemini did not return a flat value; the category was inside `content.parts[0].text`, and the returned text also had quote characters around it. I inspected the n8n output and mapped that field into the final HTTP request, removing the extra quotes before writing it back.
 
