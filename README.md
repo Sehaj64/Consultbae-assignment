@@ -1,6 +1,12 @@
 # ConsultBae — AI Automation Take-Home Assignment
 
-This project merges three messy candidate datasets into one clean database, adds an n8n + Gemini classification workflow on top of that data, and provides a small audio collection app that stores audio metadata in the same database.
+I built this as one small system rather than three disconnected tasks:
+
+- clean and merge the three messy candidate CSVs into one SQLite database;
+- use n8n + Gemini to classify candidate skills and write the result back to that same database;
+- collect audio submissions, calculate the required audio properties, and store the metadata in the same database.
+
+The main goal I kept throughout the assignment was: **keep the data flow simple enough that I can explain and extend it later.**
 
 ## Architecture
 
@@ -23,23 +29,23 @@ SQLite: consultbae.db
 
 ## Task 1 — Merge and deduplicate
 
-`pipeline.py` reads all three CSVs, standardizes their fields, resolves data-quality issues, matches records that represent the same person, and writes the final result to SQLite table `candidates`.
+`pipeline.py` loads all three CSV files, maps them into one common structure, cleans the fields, matches records that belong to the same person, and writes the final result into the SQLite `candidates` table.
 
 Current result: **103 valid source rows → 56 unique candidates**.
 
-Matching strategy:
+### Matching logic
 
-1. Match primarily on normalized email or phone because they are stronger identifiers.
-2. Use exact name + city only as a guarded fallback when there is no conflicting identifier.
-3. Do not merge records just because the names are the same.
+I intentionally kept the matching conservative:
 
-This conservative approach was chosen to avoid false merges, especially for ambiguous records such as multiple `Arjun Mehta` entries with conflicting identifiers.
+1. normalized email or phone first;
+2. exact name + city only as a guarded fallback;
+3. never merge only because the names look the same.
+
+This matters because there are ambiguous records such as multiple `Arjun Mehta` entries. If the identifiers conflict, I keep them separate instead of forcing a merge.
 
 ## Task 2 — n8n + Gemini skill tagging
 
-The exported workflow is in `n8n_skill_tagging.json`.
-
-Flow:
+The exported n8n workflow is included as `n8n_skill_tagging.json`.
 
 ```text
 Manual Trigger
@@ -51,135 +57,142 @@ Manual Trigger
 → SQLite
 ```
 
-SQLite is the source of truth. Because n8n Cloud cannot directly open a local SQLite file, `task2_api.py` exposes a small Flask API:
+I kept SQLite as the source of truth. Since n8n Cloud cannot directly open the SQLite file on my machine/server, I added a very small Flask API in `task2_api.py`:
 
-- `GET /candidates` returns candidates whose `skill_category` is still empty.
-- `POST /category` receives `candidate_id` and the Gemini-generated category and updates the same SQLite database.
+- `GET /candidates` returns candidates whose `skill_category` is empty;
+- `POST /category` accepts `candidate_id` + the Gemini category and updates that row in SQLite.
 
-The Gemini step classifies skills into one of:
+Gemini returns one of:
 
 - `automation-heavy`
 - `web dev`
 - `data`
 - `other`
 
-The Flask app is deployed on PythonAnywhere for the demo.
+For the demo, the Flask app is hosted on PythonAnywhere.
+
+> This is not an automatic file-change trigger. If the CSV files change, I rerun Task 1 first so SQLite contains the latest cleaned data, then run the n8n workflow against that latest database state.
 
 ## Task 3 — Audio collection app
 
-The audio app is implemented in `task3_audio.py` with simple HTML templates.
+The audio app is in `task3_audio.py` with simple HTML templates.
 
 A user can:
 
 - enter name and phone number;
 - record audio in the browser or upload a WAV file;
 - submit the recording;
-- view all submissions on a second page with an audio player.
+- open a second page that lists saved submissions with an audio player.
 
-The actual audio file is stored in `audio_uploads/`, while metadata is stored in the `audio_submissions` table inside the same `consultbae.db` used by Task 1.
+The audio file is stored in `audio_uploads/`. The metadata goes into the `audio_submissions` table inside the same `consultbae.db` used by Task 1.
 
-For every 16-bit PCM WAV submission, the backend extracts:
+For each 16-bit PCM WAV submission I store:
 
-- duration in seconds;
-- sample rate in kHz;
-- bitrate in kbps;
-- RMS loudness in dBFS.
+- duration (seconds)
+- sample rate (kHz)
+- bitrate (kbps)
+- RMS loudness (dBFS)
+
+I used RMS dBFS as a simple loudness estimate; it is not meant to be a full LUFS implementation.
 
 Routes:
 
 - `/audio` — record/upload form
-- `/audio/submissions` — saved submissions and playback
+- `/audio/submissions` — saved submissions + playback
+
+Demo deployment at submission time:
+
+- `https://skkr.pythonanywhere.com/audio`
+- `https://skkr.pythonanywhere.com/audio/submissions`
 
 ## Setup
 
-### 1. Install dependencies
-
 ```bash
 pip install -r requirements.txt
-```
-
-### 2. Build the Task 1 database
-
-```bash
 python pipeline.py
-```
-
-This creates `consultbae.db` and `merged_candidates.csv`.
-
-### 3. Run the Flask app locally
-
-```bash
 python task2_api.py
 ```
 
-The same Flask application serves both the Task 2 API and Task 3 audio routes.
+This creates `consultbae.db`, writes `merged_candidates.csv`, and starts the Flask app.
 
-### 4. Import the n8n workflow
+For Task 2, import `n8n_skill_tagging.json` into n8n and configure your own Gemini credential. No Gemini API key is stored in the repository.
 
-Import `n8n_skill_tagging.json` into n8n and configure your own Google Gemini credential. The submitted workflow does not include a Gemini API key.
+> Rerunning `pipeline.py` rebuilds the `candidates` table, so the derived `skill_category` values are reset. After rebuilding Task 1, rerun the n8n workflow to populate them again.
 
-> Note: rerunning `pipeline.py` rebuilds the `candidates` table and resets the derived `skill_category` values. After a fresh Task 1 rebuild, rerun the n8n workflow to repopulate the categories.
+## Task 4 — Data issues found and what I did
 
-## Task 4 — Data issues found and how I handled them
+These are the issues I found while working through the three source files:
 
-I treated the supplied files as intentionally messy rather than assuming every row or value was trustworthy.
+1. **Different schemas across the three CSVs** — mapped source-specific columns into one common candidate schema.
+2. **Phone numbers in different formats** — removed non-numeric characters and normalized valid values to the last 10 digits.
+3. **Email casing / whitespace differences** — trimmed and converted emails to lowercase before matching.
+4. **City aliases** — normalized values such as `Gurgaon`/`Gurugram`, `Bangalore`/`Bengaluru`, and Delhi variants.
+5. **Multiple date formats** — parsed them and stored dates as `YYYY-MM-DD`.
+6. **Mixed CTC scales** — values such as `4.2` were treated as LPA while full INR values were preserved as annual INR.
+7. **Blank Gig Worker row** — dropped the completely empty row.
+8. **Shifted Gig Worker row** — detected the row where values had moved into the wrong columns and realigned it instead of dropping it.
+9. **Repeated CBNexus header inside the data** — removed the repeated header row.
+10. **Inconsistent boolean values** — normalized values such as `Y`, `yes`, `Yes`, `N`, and `No`.
+11. **Status / skills casing and whitespace** — normalized text before comparison and merging.
+12. **Same person with different name representation** — e.g. `R. Verma` / `Rohit Verma`; stronger identifiers were used to connect them.
+13. **Different emails for the same person** — e.g. Nikhil Chopra could still be linked through the same phone number.
+14. **Ambiguous same-name records** — multiple `Arjun Mehta` records had conflicting identifiers, so I kept them separate.
+15. **Missing values** — kept them as null rather than guessing or inventing data.
+16. **Gig rates in different units** — kept the original rate text instead of making an unsupported hourly/monthly conversion.
 
-1. **Different schemas across all three files** — mapped source-specific columns into one common candidate schema before merging.
-2. **Phone numbers in inconsistent formats** — removed non-numeric characters and normalized valid numbers to the last 10 digits.
-3. **Email casing and whitespace differences** — trimmed whitespace and converted emails to lowercase before matching.
-4. **City aliases and casing** — standardized values such as `Gurgaon`/`Gurugram`, `Bangalore`/`Bengaluru`, and Delhi variants.
-5. **Multiple date formats** — parsed the different formats and stored dates consistently as `YYYY-MM-DD`.
-6. **Mixed CTC scales** — values such as `4.2` represented LPA while other rows contained full INR amounts. Small numeric values were converted to annual INR.
-7. **Blank Gig Worker row** — removed completely empty rows.
-8. **Shifted Gig Worker row** — detected a row where the email appeared in the worker-name column and repaired the shifted values before standardization.
-9. **Repeated CBNexus header inside the data** — detected and removed the repeated header row.
-10. **Inconsistent boolean values** — normalized values such as `Y`, `yes`, `Yes`, `N`, and `No` into consistent database values.
-11. **Inconsistent status/skill casing and whitespace** — normalized text before comparing or combining it.
-12. **Same person represented differently across sources** — for example, name variations such as `R. Verma` / `Rohit Verma` could still be connected when a stronger identifier matched.
-13. **Different emails for the same person** — for example, records such as Nikhil Chopra could have different emails but the same phone number, so the phone was used as the stronger link.
-14. **Ambiguous same-name records** — multiple `Arjun Mehta` records had conflicting identifiers. I deliberately kept them separate rather than performing a risky name-only merge.
-15. **Missing fields** — some records did not contain email, phone, skills, or other attributes. I kept missing values as null instead of inventing data.
-16. **Gig rates expressed in different units** — values could be hourly or monthly. I preserved the original rate text rather than making an unsupported conversion assumption.
+## Stuck log — what actually happened
 
-## Stuck log
+I was not blocked for hours on every task, but there were a few places where I had to stop, rethink the approach, and simplify it before moving on.
 
-### 1. Matching people without one common ID
+### 1. The first merge solution became harder to defend than it needed to be
 
-The first hard part was deciding when two rows should become one person. A name-only match looked simple, but I realized it would create false positives when two different people had the same name.
+My first concern with Task 1 was not only "does it run?" but "can I explain why every merge happened?" The earlier approach was becoming more complicated than I wanted for this dataset.
 
-I asked AI to help compare matching strategies when there is no common ID across sources. I considered fuzzy/name-based matching, but rejected using it as the primary rule because I could not safely prove that similar names were the same person. I instead used normalized email and phone as the strongest identifiers, with exact name + city only as a guarded fallback.
+I asked AI to help me simplify the pipeline without changing the core result. I considered more aggressive fuzzy/name-based matching, but rejected it because a false merge is worse than leaving an uncertain person separate.
 
-The ambiguous `Arjun Mehta` records were useful here: instead of forcing them together, I kept records with conflicting identifiers separate. That made the pipeline more conservative but safer.
+I ended up with a much simpler rule that I can explain: **email/phone first, then a guarded exact name + city fallback**. The ambiguous `Arjun Mehta` rows were a useful test of this rule because I deliberately did not force them into one person.
 
-### 2. Connecting SQLite to n8n Cloud
+### 2. I first thought a simple processed output into n8n would be enough
 
-My first idea for Task 2 was to feed a processed/static copy of the data into n8n. That would work for a one-time demo, but it would create another copy of the data and could become stale after Task 1 was rerun.
+This was the main architecture decision in Task 2.
 
-I asked AI how n8n Cloud could work with the SQLite database created by Task 1 and compared using a separate n8n Data Table with exposing my existing database through an API. I rejected the separate Data Table approach because it would create a second source of truth.
+At first I thought I could just feed the processed data into n8n and run the Gemini step. Then I asked myself: **if the Task 1 data changes, how will this workflow use the updated data?** A copied/static dataset inside n8n would work for one demo, but it could become stale.
 
-The solution was a small Flask API hosted on PythonAnywhere. n8n reads current unclassified candidates through `GET /candidates`, sends their skills to Gemini, and writes the result back through `POST /category`. SQLite therefore remains the source of truth.
+I asked AI how n8n Cloud could read and write the SQLite database created by Task 1. I looked at using a separate n8n Data Table, but rejected that because it would give me a second copy of the data to keep in sync.
 
-This is not a file-change trigger: if the source CSVs change, Task 1 is rerun first to rebuild SQLite, and then the n8n workflow reads that latest database state.
+The solution was to keep SQLite as the source of truth and expose only two small API endpoints through Flask. n8n reads current candidates through `GET /candidates` and writes the Gemini result back through `POST /category`.
 
-### 3. Audio recording and audio metrics
+That is also why I hosted the Flask app on PythonAnywhere: n8n Cloud needed an internet-accessible endpoint instead of a local SQLite file.
 
-I had not previously built browser audio capture or calculated audio properties such as sample rate, bitrate, and loudness. I asked AI how to keep this implementation small enough to understand and defend under the assignment deadline.
+### 3. Getting the Gemini output all the way back into SQLite
 
-I considered supporting many audio formats, but rejected that because it would require extra conversion tooling such as ffmpeg and add failure cases that were not needed for the core requirement. I standardized the implementation around 16-bit PCM WAV. The browser records audio and produces a WAV file, while Python's `wave` module reads the file metadata and samples.
+Once the n8n flow was connected, I still had to get the Gemini node configured and map its response correctly into the final POST request.
 
-Duration is calculated from frame count / sample rate, bitrate from sample rate × channels × bits per sample, and loudness is an RMS-based dBFS estimate. I kept this implementation deliberately small and explainable instead of adding an audio library I did not need.
+I hit a **model-required** setup error first, and later a temporary **service unavailable / high demand** response from Gemini. I checked the Gemini node settings, selected the text/model configuration, enabled retry, and tested with one candidate before processing the rest.
+
+The next thing I had to understand was the response shape. Gemini did not return a flat value; the category was inside `content.parts[0].text`, and the returned text also had quote characters around it. I inspected the n8n output and mapped that exact field into the final HTTP request, stripping the extra quotes before writing it back.
+
+I kept the candidate ID in the same item path so the category was written to the correct person. After the final run, `GET /candidates` returned:
+
+```json
+{"candidates":[]}
+```
+
+which was my check that all candidates returned by the tagging endpoint had been processed.
 
 ## Task 5 — Optional scaling notes
 
-The current SQLite + local-file design is appropriate for a take-home prototype, but I would change it before a weekend launch to 5,000 workers:
+For this assignment SQLite + server-side audio storage is enough, but I would not launch the same setup to 5,000 workers unchanged.
 
-- Store audio in object storage such as S3/R2 instead of on the web server filesystem.
-- Let clients upload directly using signed upload URLs so large files do not pass through the Flask process.
-- Move metadata from SQLite to managed PostgreSQL for concurrent writes and safer production operation.
-- Put audio analysis behind a queue so uploads return quickly and failed processing can be retried.
-- Use an idempotency/submission key to prevent duplicate records when users retry after network failures.
-- Add file-size/type/duration validation, rate limits, monitoring, and retry/error states.
-- Add a storage-retention policy because audio volume will be the main ongoing cost.
+Before launch I would:
+
+- move audio files to object storage such as S3/R2;
+- use signed direct uploads so Flask does not proxy every large file;
+- move metadata to managed PostgreSQL for better concurrent writes;
+- put audio analysis behind a queue so uploads can return quickly and failed processing can retry;
+- add an idempotency/submission key to reduce duplicate submissions after retries;
+- add file-size/type/duration checks, rate limits, monitoring, and error states;
+- define an audio retention policy because storage would become the main ongoing cost.
 
 ## Files
 
@@ -188,12 +201,14 @@ The current SQLite + local-file design is appropriate for a take-home prototype,
 - `source2_gig_workers.csv` — source data
 - `source3_cbnexus_contacts.csv` — source data
 - `merged_candidates.csv` — readable merged output
-- `task2_api.py` — Flask bridge between SQLite and n8n + app entry point
-- `n8n_skill_tagging.json` — exported Task 2 n8n workflow
+- `task2_api.py` — Flask API bridge + app entry point
+- `n8n_skill_tagging.json` — exported Task 2 workflow
 - `task3_audio.py` — Task 3 audio backend and analysis
-- `templates/` — Task 3 HTML views
-- `requirements.txt` — Python dependencies
+- `templates/` — Task 3 HTML pages
+- `requirements.txt` — dependencies
 
 ## AI use
 
-AI tools were used during development for debugging, comparing implementation options, and understanding unfamiliar areas such as n8n/SQLite integration and browser audio processing. I kept the final implementation intentionally small and reviewed the flow and calculations so that I can explain and extend the submitted solution.
+I used ChatGPT as a pair-programming/debugging tool during this assignment, especially for unfamiliar parts such as n8n, Flask-to-n8n integration, and browser audio handling.
+
+I also repeatedly asked for simpler versions and explanations instead of keeping code I could not defend. The final implementation is intentionally small: I can explain the matching rules, the two API endpoints, the n8n flow, the database writes, and the audio calculations. That was more important to me than adding extra features just for polish.
