@@ -8,14 +8,24 @@ I built this as one small system rather than three disconnected tasks:
 
 The main goal was to keep the data flow simple enough that I can explain how each part works.
 
-## Live demo links
+## Submission links
 
-- Candidate skill results: https://skkr.pythonanywhere.com/results
-- Pending candidates API used by n8n: https://skkr.pythonanywhere.com/candidates
-- Audio submission form: https://skkr.pythonanywhere.com/audio
-- Audio submissions + playback: https://skkr.pythonanywhere.com/audio/submissions
+- **GitHub repository:** https://github.com/Sehaj64/Consultbae-assignment
+- **Video walkthrough (Loom):** https://www.loom.com/share/d1af898f9a384168bc6af14370df08dd
+- **Candidate skill results:** https://skkr.pythonanywhere.com/results
+- **Pending candidates API used by n8n:** https://skkr.pythonanywhere.com/candidates
+- **Audio submission form:** https://skkr.pythonanywhere.com/audio
+- **Audio submissions + playback:** https://skkr.pythonanywhere.com/audio/submissions
+- **Exported n8n workflow:** [`n8n_skill_tagging.json`](./n8n_skill_tagging.json)
 
-The `/results` page shows all merged candidates and their `skill_category`, which makes it easy to see the labels before and after the n8n workflow runs.
+The `/results` page shows all merged candidates and their `skill_category`, which makes it easy to inspect the labels written back by the n8n workflow. The `/candidates` endpoint only returns candidates that still have skill data waiting to be classified.
+
+## Quick reviewer path
+
+1. Run `python pipeline.py` to rebuild the merged candidate dataset and SQLite database.
+2. Open `merged_candidates.csv` to inspect the 56 merged candidate records.
+3. Import `n8n_skill_tagging.json` into n8n, add a Gemini credential, and run the workflow to classify candidates and write categories back through the Flask API.
+4. Use the deployed audio form to record/upload a WAV file, then open the submissions page to see playback and extracted audio properties.
 
 ## Architecture
 
