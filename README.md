@@ -184,17 +184,12 @@ which was my check that all candidates returned by the tagging endpoint had been
 
 ## Task 5 — Optional scaling notes
 
-For this assignment SQLite + server-side audio storage is enough, but I would not launch the same setup to 5,000 workers unchanged.
+If this had to handle around 5,000 workers over one weekend, the first two changes I would make are:
 
-Before launch I would:
+1. **Move audio storage away from the web server** — I would use AWS S3 or another object-storage service instead of keeping recordings inside `audio_uploads/` on the Flask server. This would give the app much more storage space and keep large audio files separate from the application server.
+2. **Move the database from SQLite to PostgreSQL** — SQLite is fine for this assignment, but PostgreSQL would handle many users writing data at the same time more reliably.
 
-- move audio files to object storage such as S3/R2;
-- let users upload directly to that storage instead of sending every large file through Flask;
-- move metadata to PostgreSQL for better handling of many simultaneous writes;
-- put audio analysis in a queue so uploads can finish quickly and failed processing can retry;
-- add a unique submission ID to reduce duplicate records after retries;
-- add file-size/type/duration checks, rate limits, monitoring, and clear error states;
-- define how long recordings should be kept because storage will grow quickly.
+After that, I would add a queue for audio processing so uploads do not have to wait for analysis, prevent duplicate submissions with a unique submission ID, add upload limits and clear error handling, and decide how long old audio recordings should be kept so storage costs do not keep growing.
 
 ## Files
 
